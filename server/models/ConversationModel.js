@@ -1,9 +1,17 @@
 const mongoose = require('mongoose')
 
 const messageSchema = new mongoose.Schema({
-    text : {
-        type : String,
-        default : ""
+    encryptedMessage: {
+        type: String,
+        required: true
+    },
+    iv: {
+        type: String,
+        required: true
+    },
+    encryptedKeys: {
+        type: Object, // { userId: encryptedAESKey }
+        required: true
     },
     imageUrl : {
         type : String,

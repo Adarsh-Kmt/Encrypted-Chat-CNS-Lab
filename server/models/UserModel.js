@@ -17,6 +17,11 @@ const userSchema=new mongoose.Schema({
     profile_pic:{
         type:String,
         default:""
+    },
+    publicKey: {
+        type: String,
+        required: false, // Not required for legacy users, but should be set for new users
+        default: ""
     }
 },{
     timestamps:true

@@ -13,6 +13,32 @@ import Loading from './Loading';
 import backgroundImage from '../assets/wallpaper.jpeg'
 import { IoMdSend } from "react-icons/io";
 import moment from 'moment'
+import { generateAESKey, encryptWithAESKey, exportAESKey, encryptAESKeyWithRSA } from '../helpers/hybridCrypto';
+import JSEncrypt from 'jsencrypt';
+
+// Helper to import AES key from base64
+async function importAESKeyFromBase64(base64) {
+  const raw = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+  return await window.crypto.subtle.importKey(
+    'raw',
+    raw,
+    { name: 'AES-GCM' },
+    true,
+    ['encrypt', 'decrypt']
+  );
+}
+
+// Helper to decrypt with AES key
+async function decryptWithAESKey(aesKey, ciphertextBase64, ivBase64) {
+  const ciphertext = Uint8Array.from(atob(ciphertextBase64), c => c.charCodeAt(0));
+  const iv = Uint8Array.from(atob(ivBase64), c => c.charCodeAt(0));
+  const decrypted = await window.crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv },
+    aesKey,
+    ciphertext
+  );
+  return new TextDecoder().decode(decrypted);
+}
 
 const MessagePage = () => {
   const params = useParams()
@@ -33,6 +59,7 @@ const MessagePage = () => {
   })
   const [loading,setLoading] = useState(false)
   const [allMessage,setAllMessage] = useState([])
+  const [pendingMessages, setPendingMessages] = useState([]); // New state for pending messages
   const currentMessage = useRef(null)
 
   useEffect(()=>{
@@ -93,23 +120,52 @@ const MessagePage = () => {
     })
   }
 
-  useEffect(()=>{
-      if(socketConnection){
-        socketConnection.emit('message-page',params.userId)
-
-        socketConnection.emit('seen',params.userId)
-
-        socketConnection.on('message-user',(data)=>{
-          setDataUser(data)
-        }) 
-        
-        socketConnection.on('message',(data)=>{
-          console.log('message data',data)
-          setAllMessage(data)
-  
-        })
-      }
-  },[socketConnection,params?.userId,user])
+  useEffect(() => {
+    if (socketConnection) {
+      socketConnection.emit('message-page', params.userId);
+      socketConnection.emit('seen', params.userId);
+      socketConnection.on('message-user', (data) => {
+        setDataUser(data);
+      });
+      socketConnection.on('message', async (data) => {
+        const privateKey = localStorage.getItem('privateKey');
+        const userId = user._id;
+        const decryptRSA = new JSEncrypt();
+        decryptRSA.setPrivateKey(privateKey);
+        // Decrypt each message
+        const decryptedMessages = await Promise.all(data.map(async (msg) => {
+          let decryptedText = msg.text;
+          // Hybrid encryption logic
+          if (msg.encryptedMessage && msg.encryptedKeys && msg.iv) {
+            const encryptedAESKey = msg.encryptedKeys[userId];
+            if (encryptedAESKey) {
+              // Decrypt AES key with user's private key
+              const aesKeyBase64 = decryptRSA.decrypt(encryptedAESKey);
+              if (aesKeyBase64) {
+                try {
+                  const aesKey = await importAESKeyFromBase64(aesKeyBase64);
+                  decryptedText = await decryptWithAESKey(aesKey, msg.encryptedMessage, msg.iv);
+                } catch (err) {
+                  decryptedText = '[Decryption failed]';
+                }
+              } else {
+                decryptedText = '[Key decryption failed]';
+              }
+            } else {
+              decryptedText = '[No key for user]';
+            }
+          } else if (msg.text && privateKey) {
+            // fallback for legacy messages
+            const temp = decryptRSA.decrypt(msg.text);
+            if (temp) decryptedText = temp;
+          }
+          return { ...msg, text: decryptedText };
+        }));
+        setAllMessage(decryptedMessages);
+      });
+    }
+    // eslint-disable-next-line
+  }, [socketConnection, params?.userId, user])
 
   const handleOnChange = (e)=>{
     const { name, value} = e.target
@@ -122,24 +178,43 @@ const MessagePage = () => {
     })
   }
 
-  const handleSendMessage = (e)=>{
-    e.preventDefault()
+  const handleSendMessage = async (e) => {
+    e.preventDefault();
 
-    if(message.text || message.imageUrl || message.videoUrl){
-      if(socketConnection){
-        socketConnection.emit('new message',{
-          sender : user?._id,
-          receiver : params.userId,
-          text : message.text,
-          imageUrl : message.imageUrl,
-          videoUrl : message.videoUrl,
-          msgByUserId : user?._id.toString()
-        })
+    if (message.text || message.imageUrl || message.videoUrl) {
+      if (socketConnection) {
+        // 1. Generate AES key
+        const aesKey = await generateAESKey();
+        // 2. Encrypt message with AES key
+        const { ciphertext, iv } = await encryptWithAESKey(aesKey, message.text);
+        // 3. Export AES key as base64
+        const aesKeyBase64 = await exportAESKey(aesKey);
+        // 4. Encrypt AES key with sender's and receiver's public keys
+        const senderPublicKey = localStorage.getItem('publicKey');
+        const receiverPublicKey = dataUser.publicKey;
+        const encryptedKeySender = encryptAESKeyWithRSA(senderPublicKey, aesKeyBase64);
+        const encryptedKeyReceiver = encryptAESKeyWithRSA(receiverPublicKey, aesKeyBase64);
+        // 5. Prepare encryptedKeys map
+        const encryptedKeys = {
+          [user._id]: encryptedKeySender,
+          [dataUser._id]: encryptedKeyReceiver
+        };
+        // 6. Emit encrypted message and keys to server
+        socketConnection.emit('new message', {
+          sender: user?._id,
+          receiver: params.userId,
+          encryptedMessage: ciphertext,
+          iv: iv,
+          encryptedKeys: encryptedKeys,
+          imageUrl: message.imageUrl,
+          videoUrl: message.videoUrl,
+          msgByUserId: user?._id.toString()
+        });
         setMessage({
-          text : "",
-          imageUrl : "",
-          videoUrl : ""
-        })
+          text: "",
+          imageUrl: "",
+          videoUrl: ""
+        });
       }
     }
   }

@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import uploadFile from '../helpers/uploadFile';
 import axios from 'axios'
 import toast from 'react-hot-toast';
+import JSEncrypt from 'jsencrypt';
 
 const RegisterPage = () => {
   const [data,setData] = useState({
@@ -50,10 +51,19 @@ const RegisterPage = () => {
     e.preventDefault()
     e.stopPropagation()
 
+    // Generate RSA key pair
+    const crypt = new JSEncrypt({ default_key_size: 2048 });
+    const publicKey = crypt.getPublicKey();
+    const privateKey = crypt.getPrivateKey();
+    // Store private and public key in localStorage
+    localStorage.setItem('privateKey', privateKey);
+    localStorage.setItem('publicKey', publicKey);
+
     const URL = `${process.env.REACT_APP_BACKEND_URL}/api/register`
 
     try {
-        const response = await axios.post(URL,data)
+        // Send publicKey with registration data
+        const response = await axios.post(URL, { ...data, publicKey })
         console.log("response",response)
 
         toast.success(response.data.message)

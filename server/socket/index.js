@@ -51,6 +51,7 @@ io.on('connection',async(socket)=>{
             name : userDetails?.name,
             email : userDetails?.email,
             profile_pic : userDetails?.profile_pic,
+            publicKey: userDetails?.publicKey,
             online : onlineUser.has(userId)
         }
         socket.emit('message-user',payload)
@@ -90,11 +91,13 @@ io.on('connection',async(socket)=>{
         }
         
         const message = new MessageModel({
-          text : data.text,
-          imageUrl : data.imageUrl,
-          videoUrl : data.videoUrl,
-          msgByUserId :  data?.msgByUserId,
-        })
+          encryptedMessage: data.encryptedMessage,
+          iv: data.iv,
+          encryptedKeys: data.encryptedKeys,
+          imageUrl: data.imageUrl,
+          videoUrl: data.videoUrl,
+          msgByUserId: data?.msgByUserId,
+        });
         const saveMessage = await message.save()
 
         const updateConversation = await ConversationModel.updateOne({ _id : conversation?._id },{

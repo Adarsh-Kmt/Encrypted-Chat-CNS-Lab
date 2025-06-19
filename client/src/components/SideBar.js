@@ -66,7 +66,8 @@ const Sidebar = () => {
         console.log('response',response)
         dispatch(logout())
         navigate("/email")
-        localStorage.clear()
+        // Only remove token, not privateKey
+        localStorage.removeItem('token')
     }
 
   return (
